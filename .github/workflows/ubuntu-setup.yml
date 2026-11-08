@@ -1,0 +1,38 @@
+name: Ubuntu 24.04 setup and TLS tests
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Fetch the exact public commit
+        run: |
+          git init .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+
+      - name: Check syntax and preservation guards
+        run: |
+          bash -n setup.sh
+          python3 -m unittest discover -s tests -v
+          python3 -m compileall -q client demo server
+
+      - name: Prepare this disposable runner for compilation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3 git curl ca-certificates xz-utils openssl iproute2 \
+            build-essential pkg-config libssl-dev zlib1g-dev libbz2-dev \
+            libreadline-dev libsqlite3-dev libffi-dev liblzma-dev libncurses-dev \
+            libgdbm-dev libgdbm-compat-dev uuid-dev tk-dev
+
+      - name: Build both Pythons and run the complete setup
+        run: bash setup.sh

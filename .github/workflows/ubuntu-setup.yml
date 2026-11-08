@@ -25,14 +25,11 @@ jobs:
           python3 -m unittest discover -s tests -v
           python3 -m compileall -q client demo server
 
-      - name: Prepare this disposable runner for compilation
+      - name: Prepare runtime tools on this disposable runner
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3 git curl ca-certificates xz-utils openssl iproute2 \
-            build-essential pkg-config libssl-dev zlib1g-dev libbz2-dev \
-            libreadline-dev libsqlite3-dev libffi-dev liblzma-dev libncurses-dev \
-            libgdbm-dev libgdbm-compat-dev uuid-dev tk-dev
+            python3 git curl ca-certificates openssl iproute2
 
-      - name: Build both Pythons and run the complete setup
+      - name: Install both portable Pythons and run the complete setup
         run: bash setup.sh

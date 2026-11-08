@@ -19,8 +19,11 @@ bash setup.sh
 For an existing clone, use `cd ~/lab`, `git pull --ff-only`, then `bash setup.sh`.
 Keep your VM snapshot. Run as your normal account, without sudo; the script
 requests sudo for dependencies and reading protected Apache configuration.
-Allow at least 6 GiB free storage and time for two source builds.
-On a low-memory VM use `ACW3_JOBS=1 bash setup.sh`.
+Allow at least 1 GiB free storage. The default uses checksum-pinned, portable
+CPython builds from Astral's `python-build-standalone` project, the same
+distribution project used by uv. ARM64 (`aarch64`) and x86-64 are supported.
+Each interpreter and its bundled libraries stay under `~/acw3`; no PATH
+changes, global symlinks or system Python replacements are made.
 
 If Git is missing but curl is available:
 
@@ -42,11 +45,16 @@ bash setup.sh
    A notice identifies the incomplete history, and a complete fresh baseline
    is used for this run's before/after checks. Empty or mismatching saved
    baselines still stop setup.
-2. Installs missing build dependencies. An APT pre-install guard rejects
+2. Installs only missing runtime tools: Python 3, Git, curl, CA certificates,
+   OpenSSL CLI and iproute2. An APT pre-install guard rejects
    replacement of any installed package, including dependency upgrades.
    `--no-remove` blocks package removal. This policy applies to that command.
-3. Verifies official source archive checksums, then builds each interpreter
-   into its own `~/acw3/python-VERSION` prefix with `make altinstall`.
+3. Downloads both portable interpreters into their own
+   `~/acw3/python-VERSION` directories after verifying pinned SHA-256 hashes.
+   Version, architecture, vendor URLs and digests are recorded in
+   [python-downloads.json](python-downloads.json), with a link to the exact
+   upstream metadata commit. Both interpreters must import the lab's modules
+   and pass vulnerable/patched behaviour checks.
 4. Checks vulnerable/patched behaviour and prepares project certificates.
    Existing valid certificates are reused; a partial main certificate set
    stops setup rather than deleting existing files.
@@ -55,22 +63,37 @@ bash setup.sh
 6. Compares existing application versions, every previously installed
    package version, Apache configuration and recorded MCPJam manifests.
 
-If setup prints `BLOCKED`, stop and inspect the error. For example, the
-available `libssl-dev` may require upgrading the existing OpenSSL library.
-That transaction is refused. Matching development packages or an isolated
-VM copy may be needed; do not remove the guard to force an upgrade.
+The default does not request SQLite, OpenSSL or other development packages.
+This avoids a dependency conflict such as `libsqlite3-dev` requesting an
+upgrade of the VM's existing `libsqlite3-0`. Downloaded APT packages from a
+previous blocked attempt can remain cached; this setup does not install
+those cached development packages.
+
+If setup still prints `BLOCKED`, stop and inspect the error. Even a missing
+runtime tool can require replacing an installed library; that transaction
+is refused. Do not remove the guard to force an upgrade.
 
 The installer does not edit Apache/MCPJam configuration, restart their
 services, change the default Python command, change network settings, or
-install the generated CA into system trust. Adding new build dependencies
+install the generated CA into system trust. Adding missing packages
 still changes the VM; your snapshot provides a rollback if needed.
+
+### Optional source build
+
+`bash setup.sh source` retains the original build-from-source approach. It
+uses official python.org archives and `make altinstall` in private prefixes,
+and requests `xz-utils`, `build-essential`, `pkg-config`, `libssl-dev` and
+`zlib1g-dev` with the same package guard. Optional SQLite, Tk and database
+development packages are omitted. Source mode can still be blocked when
+development headers require replacing existing runtime libraries. Allow
+6 GiB free; `ACW3_JOBS=1 bash setup.sh source` reduces compiler parallelism.
 
 ## Logs and live demonstration
 
 Local logs are saved outside Git under `~/acw3/checks/runs/`. A successful
 automatic run prints `7/7 tests passed` and finishes with preservation
 checks passed. Logs include builds, client output, `server.txt` and
-`results.tsv`. Reruns reuse healthy private Python builds.
+`results.tsv`. Reruns reuse healthy private Python installations.
 
 For two terminals, run these commands from the repository folder:
 
@@ -121,9 +144,16 @@ bash -n setup.sh
 python3 -m unittest discover -s tests -v
 ```
 
-GitHub Actions runs on Ubuntu 24.04, checks the guards, preinstalls build
-tools in that disposable runner, and runs the full installer with both
-Python builds and all seven TLS tests. Check Actions for the latest result.
+Local validation passed all 31 guard/archive tests. All four pinned Linux
+archives were downloaded and their checksums and layouts verified. T01-T07
+and the expected server receipt counts also passed with the equivalent
+macOS portable builds. These checks do not constitute an Ubuntu execution.
+
+The GitHub Actions workflow targets Ubuntu 24.04, checks the guards,
+preinstalls runtime tools in that disposable runner, and runs the default
+portable installer with both Pythons and all seven TLS tests. Check Actions
+for the latest result. A known account billing restriction has prevented
+hosted jobs from starting, so this is not a claim of a successful Ubuntu run.
 Hosted-runner validation cannot guarantee dependency installation on every
 existing VM; the guard checks the actual VM's package transaction.
 
@@ -146,5 +176,6 @@ from the published source.
 - [Python 3.13.16 and fix](https://www.python.org/downloads/release/python-31316/)
 - [SSLContext.wrap_bio](https://docs.python.org/3.13/library/ssl.html#ssl.SSLContext.wrap_bio)
 - [Python source installation](https://docs.python.org/3.13/using/unix.html#building-python)
+- [Astral's portable Python distributions](https://docs.astral.sh/python-build-standalone/)
 - [Ubuntu APT hooks](https://manpages.ubuntu.com/manpages/noble/man5/apt.conf.5.html)
 - [GitHub CLI login](https://cli.github.com/manual/gh_auth_login)

@@ -47,6 +47,50 @@ class SetupGuards(unittest.TestCase):
             input=str(self.deb) + '\n' if data is None else data,
             capture_output=True, text=True, env=self.env, timeout=10)
 
+    def baseline(self, saved, current=None):
+        if current is None:
+            current = ('Python 3.12.3\nv22.23.4\n10.9.9\n'
+                       'Server version: Apache/2.4.58 (Ubuntu)\n'
+                       'Server built:   2026-10-08T19:58:01\n'
+                       'OpenSSL 3.0.13 30 Jan 2024 (Library: OpenSSL 3.0.13 30 Jan 2024)\n')
+        (self.folder / 'step1-versions.txt').write_text(saved)
+        (self.folder / 'versions-before.txt').write_text(current)
+        result = self.shell('RUN_DIR=' + shlex.quote(str(self.folder)) + '; compare_step1_baseline')
+        self.assertEqual((self.folder / 'step1-versions.txt').read_text(), saved)
+        self.assertEqual((self.folder / 'versions-before.txt').read_text(), current)
+        return result
+
+    def test_partial_step1_baseline_accepts_matching_python(self):
+        result = self.baseline('Python 3.12.3\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('Missing historical versions cannot be checked', result.stdout)
+
+    def test_complete_step1_baseline_is_accepted(self):
+        result = self.baseline('Python 3.12.3\nv22.23.4\n', 'Python 3.12.3\nv22.23.4\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('[NOTICE]', result.stdout)
+
+    def test_changed_python_version_is_blocked(self):
+        result = self.baseline('Python 3.12.2\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Python 3.12.2', result.stdout)
+
+    def test_changed_apache_version_in_partial_baseline_is_blocked(self):
+        result = self.baseline('Python 3.12.3\nServer version: Apache/2.4.57 (Ubuntu)\n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Apache/2.4.57', result.stdout)
+
+    def test_empty_step1_baseline_is_blocked(self):
+        result = self.baseline('\n  \n')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('baseline is empty', result.stdout)
+
+    def test_duplicate_saved_entries_are_blocked(self):
+        self.assertNotEqual(self.baseline('Python 3.12.3\nPython 3.12.3\n').returncode, 0)
+
+    def test_baseline_whitespace_and_blank_lines_are_accepted(self):
+        self.assertEqual(self.baseline('\n Python 3.12.3  \n\n').returncode, 0)
+
     def test_new_package_is_allowed(self):
         self.assertEqual(self.guard().returncode, 0)
 

@@ -11,10 +11,10 @@ SERVER_PID=""
 VULNERABLE="$LAB_DIR/python-3.13.15/bin/python3.13"
 PATCHED="$LAB_DIR/python-3.13.16/bin/python3.13"
 JOBS="${ACW3_JOBS:-2}"
-DEPS=(python3 git curl ca-certificates xz-utils openssl iproute2
-      build-essential pkg-config libssl-dev zlib1g-dev libbz2-dev
-      libreadline-dev libsqlite3-dev libffi-dev liblzma-dev libncurses-dev
-      libgdbm-dev libgdbm-compat-dev uuid-dev tk-dev)
+DEPS=(python3 git curl ca-certificates openssl iproute2)
+# The source-build alternative needs these headers. Optional SQLite, Tk,
+# curses and database development packages are not needed by the TLS lab.
+SOURCE_DEPS=(xz-utils build-essential pkg-config libssl-dev zlib1g-dev)
 
 say() { printf '\n[ACW3] %s\n' "$*"; }
 die() { printf '\n[STOP] %s\n' "$*" >&2; exit 1; }
@@ -35,9 +35,13 @@ trap 'rc=$?; printf "\n[STOP] Step failed (exit %s), line %s. Logs: %s\n" "$rc" 
 usage() {
     cat <<'TEXT'
 Run from your normal Ubuntu account, without sudo:
-  bash setup.sh          Install missing dependencies, build both Pythons,
+  bash setup.sh          Install missing runtime tools, download both private
+                         portable Pythons (with SHA-256 verification),
                          prepare certificates, run all seven tests, and
                          compare existing packages and Apache configuration.
+  bash setup.sh portable Explicitly select the default portable installation.
+  bash setup.sh source   Compile from python.org source instead; requires
+                         guarded installation of compiler/development tools.
   bash setup.sh deps     Install dependencies only, using the package guard.
   bash setup.sh check    Read-only readiness and port checks.
   bash setup.sh server   Run the prepared dual-endpoint server in this terminal.
@@ -212,7 +216,7 @@ install_dependencies() {
 
 project_check() {
     local file
-    for file in client/check_wrap_bio.py server/make_test_certs.sh \
+    for file in python-downloads.json client/check_wrap_bio.py server/make_test_certs.sh \
         demo/make_service_cert.sh demo/make_t07_ca.sh demo/impact_server.py \
         demo/impact_client.py demo/t07_untrusted_ca.py demo/preflight.sh; do
         [[ -f "$PROJECT_DIR/$file" ]] || die "Missing project file: $file. Clone the complete repository."
@@ -230,10 +234,70 @@ python_check() {
     local executable="$1" version="$2"
     [[ -x "$executable" ]] || return 1
     "$executable" - "$version" <<'PY'
-import ssl, sys
+import argparse, pathlib, re, select, socket, ssl, subprocess, sys
 assert sys.version.split()[0] == sys.argv[1], (sys.version, sys.argv[1])
 print('Python', sys.version.split()[0], '|', ssl.OPENSSL_VERSION)
 PY
+}
+
+portable_spec() {
+    python3 - "$PROJECT_DIR/python-downloads.json" "$1" "${2:-$(uname -m)}" <<'PY'
+import json
+from pathlib import Path
+import re
+import sys
+
+filename, version, architecture = sys.argv[1:]
+if architecture not in ('aarch64', 'x86_64') or version not in ('3.13.15', '3.13.16'):
+    sys.exit(f'Unsupported portable Python request: {version}/{architecture}')
+item = json.loads(Path(filename).read_text())['downloads'][f'{version}/{architecture}']
+build, checksum = item['build'], item['sha256']
+if not re.fullmatch(r'[0-9]{8}', build) or not re.fullmatch(r'[a-f0-9]{64}', checksum):
+    sys.exit('Invalid pinned Python download metadata.')
+expected = (f'https://github.com/astral-sh/python-build-standalone/releases/download/{build}/'
+            f'cpython-{version}%2B{build}-{architecture}-unknown-linux-gnu-install_only_stripped.tar.gz')
+if item['url'] != expected:
+    sys.exit('The pinned Python URL does not match its version, architecture and vendor.')
+if not re.fullmatch(r'https://api\.github\.com/repos/astral-sh/python-build-standalone/releases/assets/[0-9]+', item['api_url']):
+    sys.exit('The pinned asset API URL does not match the Python vendor.')
+print(item['api_url'] + '\t' + checksum + '\t' + item['url'])
+PY
+}
+
+install_portable_python() {
+    local version="$1" architecture spec url checksum fallback_url archive prefix stage
+    architecture="$(uname -m)"
+    spec="$(portable_spec "$version" "$architecture")"
+    IFS=$'\t' read -r url checksum fallback_url <<< "$spec"
+    prefix="$LAB_DIR/python-$version"
+    archive="$LAB_DIR/src/cpython-$version-$architecture-portable.tar.gz"
+    [[ ! -L "$LAB_DIR/src" && ! -L "$prefix" && ! -L "$archive" && ! -L "$archive.part" ]] \
+        || die "Portable Python paths must not be symbolic links."
+    if [[ -e "$prefix" ]]; then
+        python_check "$prefix/bin/python3.13" "$version" \
+            || die "Existing private Python $version is incomplete. Inspect $prefix before retrying."
+        say "Reusing healthy private Python $version"
+        return
+    fi
+    mkdir -p "$LAB_DIR/src"
+    if [[ ! -f "$archive" ]]; then
+        say "Downloading isolated Python $version for $architecture"
+        if ! curl --fail --location --retry 3 \
+            --header 'Accept: application/octet-stream' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' "$url" --output "$archive.part"; then
+            curl --fail --location --retry 3 "$fallback_url" --output "$archive.part"
+        fi
+        mv -- "$archive.part" "$archive"
+    fi
+    printf '%s  %s\n' "$checksum" "$archive" | sha256sum -c -
+    stage="$(mktemp -d "$LAB_DIR/.portable-$version-XXXXXX")"
+    tar -xzf "$archive" -C "$stage" --no-same-owner --no-same-permissions
+    [[ -d "$stage/python" && ! -L "$stage/python" ]] || die "Unexpected portable archive layout: $stage"
+    python_check "$stage/python/bin/python3.13" "$version"
+    mv -- "$stage/python" "$prefix"
+    rmdir -- "$stage"
+    python_check "$prefix/bin/python3.13" "$version" \
+        | tee "$RUN_DIR/portable-$version.txt"
 }
 
 build_python() {
@@ -382,7 +446,7 @@ main() {
             python_check "$PATCHED" 3.13.16
             ports_free
             exec "$PATCHED" -u "$PROJECT_DIR/demo/impact_server.py";;
-        setup|deps|test|login) ;;
+        setup|portable|source|deps|test|login) ;;
         *) usage; die "Unknown command: $mode";;
     esac
     new_run
@@ -396,14 +460,24 @@ main() {
         gh auth setup-git --hostname github.com
         return
     fi
-    install_dependencies "${DEPS[@]}"
+    if [[ "$mode" == source ]]; then
+        install_dependencies "${DEPS[@]}" "${SOURCE_DEPS[@]}"
+    else
+        install_dependencies "${DEPS[@]}"
+    fi
     check_preservation
     [[ "$mode" != deps ]] || return
     ports_free
     free_kb="$(df -Pk "$LAB_DIR" | awk 'END {print $4}')"
-    [[ "$free_kb" -ge 6291456 ]] || die "Allow at least 6 GiB free for the two source builds."
-    build_python 3.13.15 1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76
-    build_python 3.13.16 f4b1bfb3c79b5bb11b8d228a12504163b4c0dab4d679828d8f5f26b6cb6ab35d
+    if [[ "$mode" == source ]]; then
+        [[ "$free_kb" -ge 6291456 ]] || die "Allow at least 6 GiB free for the two source builds."
+        build_python 3.13.15 1e66a7945a48390ee4c2a4268a0e4185884059a13c4aab6d148aa208deea4a76
+        build_python 3.13.16 f4b1bfb3c79b5bb11b8d228a12504163b4c0dab4d679828d8f5f26b6cb6ab35d
+    else
+        [[ "$free_kb" -ge 1048576 ]] || die "Allow at least 1 GiB free for the portable Pythons."
+        install_portable_python 3.13.15
+        install_portable_python 3.13.16
+    fi
     standalone_checks
     prepare_certificates
     automated_demo

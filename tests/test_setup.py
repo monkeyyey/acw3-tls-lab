@@ -1,8 +1,11 @@
 """Regression checks for preservation guards; no sudo or package installs."""
 from pathlib import Path
+import hashlib
+import json
 import os
 import shlex
 import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -90,6 +93,92 @@ class SetupGuards(unittest.TestCase):
 
     def test_baseline_whitespace_and_blank_lines_are_accepted(self):
         self.assertEqual(self.baseline('\n Python 3.12.3  \n\n').returncode, 0)
+
+    def test_arm64_portable_versions_are_pinned(self):
+        for version in ('3.13.15', '3.13.16'):
+            result = self.shell(f'portable_spec {version} aarch64')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f'cpython-{version}%2B', result.stdout)
+            self.assertIn('-aarch64-unknown-linux-gnu-', result.stdout)
+
+    def test_x86_portable_versions_are_pinned(self):
+        for version in ('3.13.15', '3.13.16'):
+            result = self.shell(f'portable_spec {version} x86_64')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('-x86_64-unknown-linux-gnu-', result.stdout)
+
+    def test_unsupported_portable_architecture_is_blocked(self):
+        result = self.shell('portable_spec 3.13.15 riscv64')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unsupported portable Python request', result.stderr)
+
+    def portable_metadata(self, field, value):
+        data = json.loads((SETUP.parent / 'python-downloads.json').read_text())
+        data['downloads']['3.13.15/aarch64'][field] = value
+        (self.folder / 'python-downloads.json').write_text(json.dumps(data))
+        return 'PROJECT_DIR=' + shlex.quote(str(self.folder)) + '; '
+
+    def test_substituted_download_vendor_is_blocked(self):
+        command = self.portable_metadata('url', 'https://example.invalid/python.tar.gz')
+        result = self.shell(command + 'portable_spec 3.13.15 aarch64')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('does not match', result.stderr)
+
+    def test_invalid_download_digest_is_blocked(self):
+        command = self.portable_metadata('sha256', 'not-a-checksum')
+        result = self.shell(command + 'portable_spec 3.13.15 aarch64')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Invalid pinned', result.stderr)
+
+    def test_substituted_asset_api_vendor_is_blocked(self):
+        command = self.portable_metadata('api_url', 'https://api.github.com/repos/example/other/releases/assets/1')
+        result = self.shell(command + 'portable_spec 3.13.15 aarch64')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('API URL does not match', result.stderr)
+
+    def portable_fixture(self, corrupt=False):
+        fixture = self.folder / 'fixture' / 'python' / 'bin'
+        fixture.mkdir(parents=True)
+        executable = fixture / 'python3.13'
+        executable.write_text('#!/bin/sh\ncat >/dev/null\nprintf "fixture interpreter\\n"\n')
+        executable.chmod(0o700)
+        archive = self.folder / 'fixture.tar.gz'
+        with tarfile.open(archive, 'w:gz') as handle:
+            handle.add(fixture.parent, arcname='python')
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        command = self.portable_metadata('sha256', digest)
+        self.lab = self.folder / 'private lab'
+        cache = self.lab / 'src'
+        cache.mkdir(parents=True)
+        (cache / 'cpython-3.13.15-aarch64-portable.tar.gz').write_bytes(
+            b'corrupted download' if corrupt else archive.read_bytes())
+        self.mock('uname', 'echo aarch64')
+        self.mock('curl', 'echo "Unexpected network request" >&2; exit 99')
+        return (command + 'LAB_DIR=' + shlex.quote(str(self.lab)) + '; RUN_DIR='
+                + shlex.quote(str(self.folder)) + '; install_portable_python 3.13.15')
+
+    def test_verified_archive_is_installed_under_private_prefix(self):
+        result = self.shell(self.portable_fixture())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.lab / 'python-3.13.15' / 'bin' / 'python3.13').is_file())
+        self.assertEqual(list(self.lab.glob('.portable-*')), [])
+
+    def test_corrupt_portable_archive_is_rejected_before_extraction(self):
+        result = self.shell(self.portable_fixture(corrupt=True))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.lab / 'python-3.13.15').exists())
+        self.assertEqual(list(self.lab.glob('.portable-*')), [])
+
+    def test_incomplete_private_installation_is_preserved(self):
+        command = self.portable_fixture()
+        prefix = self.lab / 'python-3.13.15'
+        prefix.mkdir()
+        sentinel = prefix / 'preserve.txt'
+        sentinel.write_text('existing files')
+        result = self.shell(command)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('is incomplete', result.stderr)
+        self.assertEqual(sentinel.read_text(), 'existing files')
 
     def test_new_package_is_allowed(self):
         self.assertEqual(self.guard().returncode, 0)

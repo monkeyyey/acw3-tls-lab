@@ -1,0 +1,29 @@
+{
+  "source": "https://raw.githubusercontent.com/astral-sh/uv/3e2f08f8e75624ec942f864cd56b816885b80b7c/crates/uv-python-managed/download-metadata.json",
+  "downloads": {
+    "3.13.15/aarch64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.13.15%2B20260929-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "3807936bef22d3e347454df4f8774c786f98c7caa5e7328425e7b40766a9cff8",
+      "build": "20260929",
+      "api_url": "https://api.github.com/repos/astral-sh/python-build-standalone/releases/assets/598638213"
+    },
+    "3.13.15/x86_64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260929/cpython-3.13.15%2B20260929-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "c552deaf9ed0e678dee4ccc760d6dcd7cab33f1bd43e8037123b4a4db8508e14",
+      "build": "20260929",
+      "api_url": "https://api.github.com/repos/astral-sh/python-build-standalone/releases/assets/598638896"
+    },
+    "3.13.16/aarch64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "69a30ed26198178732c37b8de0b6b5191479fbacfe526954da776befe38f18e7",
+      "build": "20261013",
+      "api_url": "https://api.github.com/repos/astral-sh/python-build-standalone/releases/assets/638902592"
+    },
+    "3.13.16/x86_64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.13.16%2B20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+      "sha256": "d0080766b6b74aeb81e1949ef0d9a20e6c17f7b160fb295a69b936ccb17660be",
+      "build": "20261013",
+      "api_url": "https://api.github.com/repos/astral-sh/python-build-standalone/releases/assets/638903368"
+    }
+  }
+}

@@ -38,6 +38,10 @@ bash setup.sh
    configuration hashes, and MCPJam package manifests if `~/mcpjam` exists.
    Set `MCPJAM_DIR` if your MCPJam project is elsewhere. Your existing
    `~/acw3/checks/versions-before.txt` from Step 1 is retained and compared.
+   If Step 1 contains only some versions, each saved entry must still match.
+   A notice identifies the incomplete history, and a complete fresh baseline
+   is used for this run's before/after checks. Empty or mismatching saved
+   baselines still stop setup.
 2. Installs missing build dependencies. An APT pre-install guard rejects
    replacement of any installed package, including dependency upgrades.
    `--no-remove` blocks package removal. This policy applies to that command.

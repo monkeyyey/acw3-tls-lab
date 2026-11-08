@@ -102,6 +102,35 @@ mcp_manifest() {
     return 0
 }
 
+compare_step1_baseline() {
+    python3 - "$RUN_DIR/step1-versions.txt" "$RUN_DIR/versions-before.txt" <<'PY'
+from collections import Counter
+from pathlib import Path
+import sys
+
+def lines(filename):
+    return [line.strip() for line in Path(filename).read_text().splitlines() if line.strip()]
+
+saved, current = map(lines, sys.argv[1:])
+if not saved:
+    print('[FAIL] The saved Step 1 baseline is empty. Inspect it before continuing.')
+    sys.exit(1)
+missing = Counter(saved) - Counter(current)
+if missing:
+    print('[FAIL] These saved Step 1 entries do not match the current environment:')
+    for line, count in missing.items():
+        print(f'  {line}' + (f' ({count} entries)' if count > 1 else ''))
+    sys.exit(1)
+if len(saved) < len(current):
+    print('[NOTICE] Step 1 recorded only part of the version information.')
+    print('[PASS] Every recorded entry still matches. The original file is retained.')
+    print('[NOTICE] Missing historical versions cannot be checked; the complete current')
+    print('         baseline will be used to verify changes made by this setup run.')
+else:
+    print('[PASS] The saved Step 1 versions match the current environment.')
+PY
+}
+
 capture_before() {
     versions > "$RUN_DIR/versions-before.txt" 2>&1
     packages > "$RUN_DIR/packages-before.tsv"
@@ -109,7 +138,7 @@ capture_before() {
     mcp_manifest > "$RUN_DIR/mcp-before.sha256"
     if [[ -f "$CHECK_DIR/versions-before.txt" ]]; then
         cp -- "$CHECK_DIR/versions-before.txt" "$RUN_DIR/step1-versions.txt"
-        if ! diff -u "$RUN_DIR/step1-versions.txt" "$RUN_DIR/versions-before.txt"; then
+        if ! compare_step1_baseline; then
             die "Current versions differ from your saved Step 1 baseline. Check the difference before continuing."
         fi
     fi
